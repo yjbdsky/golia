@@ -24,37 +24,37 @@ const (
 )
 
 func Init() {
-	var format = "%{color}%{time:15:04:05.000000} %{level:.4s} %{color:reset} %{message}"
-	logBackend := logging.NewLogBackend(os.Stderr, "", 0)
-	logging.SetFormatter(logging.MustStringFormatter(format))
+	var format = logging.MustStringFormatter(
+		`%{color}%{time:15:04:05.000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}`)
+	var logBackend = logging.NewLogBackend(os.Stderr, "", 0)
+	logging.SetFormatter(format)
 	logging.SetBackend(logBackend)
+
 }
 
-
-
 var log = logging.MustGetLogger("golia")
-ch := make(chan Datapoint)
+var ch = make(chan Datapoint)
 var conn *Conn
 
-sleepInterval:=30
-fileToWatch:="a.txt"
-carbonAddr:="op4.ecld.com:2003"
-mondoAddr:="http://op2.ecld.com:9518/"
-metricHead:=strings.Replace(GetAddr(), ".", "_", -1)
-
+var sleepInterval = 30
+var fileToWatch = "a.txt"
+var carbonAddr = "127.0.0.1:2003"
+var mondoAddr = "http://op2.ecld.com:9518/"
 
 func collectAndSend(addr string) {
-	c, err := NewConn(addr)
-	if err != nil {
-		conn = &c
-		for{
+	conn, err := NewConn(addr)
+	if err == nil && conn != nil {
+		for {
 			dp := <-ch
-			conn.WriteDataPoint(dp)
+			n, err1 := conn.WriteDataPoint(dp)
+			if err1 != nil || n == 0 {
+				log.Warningf("can't send metric %v", dp)
+			}
 		}
 	} else {
 		log.Error(err)
 		os.Exit(2)
-	}	
+	}
 }
 
 func lookPath() (argv0 string, err error) {
@@ -72,7 +72,6 @@ func reloaderLoop(path string, interval int) {
 	var md5 string
 	for {
 		tag, err := getMd5(path)
-		log.Infof("value is %s\n", tag)
 		if err != nil {
 			log.Error(err)
 			os.Exit(4)
@@ -83,7 +82,6 @@ func reloaderLoop(path string, interval int) {
 			log.Info("detect change....")
 			os.Exit(3)
 		}
-		log.Debug("no change...")
 		time.Sleep(time.Second * time.Duration(interval))
 	}
 }
@@ -119,9 +117,19 @@ func handleExit(sigs chan os.Signal) {
 	sig := <-sigs
 	log.Infof("receive signal exiting...%v\n", sig)
 	close(ch)
-	conn.Close()
-	log.Infof("exited...%v\n", sig)
-	os.Exit(0)
+	if conn == nil {
+		os.Exit(2)
+	}
+	if conn.isAlive() {
+		err := conn.Close()
+		if err == nil {
+			log.Infof("exited...%v\n", sig)
+			os.Exit(0)
+		} else {
+			log.Infof("exited error...%v\n", err)
+			os.Exit(2)
+		}
+	}
 }
 
 func getMd5(path string) (ret string, err error) {
@@ -135,27 +143,28 @@ func getMd5(path string) (ret string, err error) {
 	return
 }
 
-func getAddrByDefault() string {
+func getAddrByDefault() (string, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		fmt.Println(err.Error())
-		return "Erorr"
+		return "", err
 	}
 	defer conn.Close()
-	return strings.Split(conn.LocalAddr().String(), ":")[0]
+	return strings.Split(conn.LocalAddr().String(), ":")[0], nil
 }
 
-func GetAddr() (r string) {
+func GetAddr() (r string, err error) {
 	resp, err := http.Get(mondoAddr)
-	defer resp.Body.Close()
-	if err != nil {
-		r = getAddrByDefault()
+	if err == nil {
+		defer resp.Body.Close()
+		body, err1 := ioutil.ReadAll(resp.Body)
+		if err1 == nil {
+			r = string(body)
+			err = err1
+			return
+		}
 	}
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil || r == "" {
-		r = getAddrByDefault()
-	}
-	r = string(body)
+	r, err = getAddrByDefault()
 	return
 }
 
@@ -164,9 +173,15 @@ func main() {
 		log.Info("golia subprocess start")
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		ip, err := GetAddr()
+		if err != nil {
+			os.Exit(1)
+		}
+		log.Infof("using ip address %s\n", ip)
+		metricHead := strings.Replace(ip, ".", "_", -1)
+		collector := Collector{ch, metricHead, sleepInterval}
 		go handleExit(sigs)
 		go collectAndSend(carbonAddr)
-		collector :=Collector{ch,metricHead,sleepInterval}
 		go collector.CollectAllMetric()
 		reloaderLoop(fileToWatch, sleepInterval)
 	} else {

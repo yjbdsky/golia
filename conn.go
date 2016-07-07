@@ -31,6 +31,7 @@ func (d *Datapoint) formated() string {
 }
 
 func NewConn(addr string) (*Conn, error) {
+	log.Infof("start new connection to %s\n", addr)
 	raddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		return nil, err
@@ -50,6 +51,7 @@ func NewConn(addr string) (*Conn, error) {
 		pickle:   false,
 		addr:     addr,
 	}
+	log.Infof("connected with %s\n", addr)
 	go connObj.checkEOF()
 	go connObj.handleData()
 	go connObj.handleStatus()

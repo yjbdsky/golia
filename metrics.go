@@ -21,9 +21,10 @@ func (c *Collector) CollectAllMetric() {
 
 func (c *Collector) GetUpTimeAndProcs() {
 	info, err := host.Info()
-	if err != nil {
-		uptime := info.Uptime
-		procs := info.Procs
+	if err == nil {
+		log.Info("collecting up procs metrics")
+		uptime := float64(info.Uptime)
+		procs := float64(info.Procs)
 		t := uint32(time.Now().Unix())
 		c.ch <- Datapoint{c.metricHead + ".host.uptime", uptime, t}
 		c.ch <- Datapoint{c.metricHead + ".host.procs", procs, t}
