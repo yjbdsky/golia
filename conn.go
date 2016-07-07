@@ -26,6 +26,10 @@ type Datapoint struct {
 	Time uint32
 }
 
+func (d *Datapoint) formated() string {
+	return fmt.Sprintf("%s %f %d\n", d.Name, d.Val, d.Time)
+}
+
 func NewConn(addr string) (*Conn, error) {
 	raddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
@@ -65,10 +69,6 @@ func (c *Conn) handleStatus() {
 			log.Infof("conn %s up query responded with %t", c.addr, c.up)
 		}
 	}
-}
-
-func (d *Datapoint) formated() string {
-	return fmt.Sprintf("%s %f %d\n", d.Name, d.Val, d.Time)
 }
 
 func (c *Conn) WriteDataPoint(data Datapoint) (int, error) {
