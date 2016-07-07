@@ -53,7 +53,7 @@ func collectAndSend(addr string) {
 		}
 	} else {
 		log.Error(err)
-		return
+		os.Exit(2)
 	}	
 }
 
@@ -165,7 +165,7 @@ func main() {
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 		go handleExit(sigs)
-		collectAndSend(carbonAddr)
+		go collectAndSend(carbonAddr)
 		collector :=Collector{ch,metricHead,sleepInterval}
 		go collector.CollectAllMetric()
 		reloaderLoop(fileToWatch, sleepInterval)
