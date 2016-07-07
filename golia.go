@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/md5"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	logging "github.com/op/go-logging"
 )
 
@@ -22,6 +24,15 @@ const (
 	SIGQUIT = syscall.SIGQUIT
 	SIGTERM = syscall.SIGTERM
 )
+
+type Config struct {
+	ReloadInterval int
+	MetricInterval int
+	CarbonAddr     string
+	MondoAddr      string
+	Metrics        []string
+	LogLevel       string
+}
 
 func Init() {
 	var format = logging.MustStringFormatter(
@@ -35,11 +46,7 @@ func Init() {
 var log = logging.MustGetLogger("golia")
 var ch = make(chan Datapoint)
 var conn *Conn
-
-var sleepInterval = 30
-var fileToWatch = "a.txt"
-var carbonAddr = "127.0.0.1:2003"
-var mondoAddr = "http://op2.ecld.com:9518/"
+var conf Config
 
 func collectAndSend(addr string) {
 	conn, err := NewConn(addr)
@@ -153,8 +160,8 @@ func getAddrByDefault() (string, error) {
 	return strings.Split(conn.LocalAddr().String(), ":")[0], nil
 }
 
-func GetAddr() (r string, err error) {
-	resp, err := http.Get(mondoAddr)
+func GetAddr(addr string) (r string, err error) {
+	resp, err := http.Get(addr)
 	if err == nil {
 		defer resp.Body.Close()
 		body, err1 := ioutil.ReadAll(resp.Body)
@@ -169,23 +176,47 @@ func GetAddr() (r string, err error) {
 }
 
 func main() {
+	flag.Parse()
+	config_file := "conf/golia.ini"
+	if 1 == flag.NArg() {
+		config_file = flag.Arg(0)
+	}
+	if _, err := toml.DecodeFile(config_file, &conf); err != nil {
+		log.Error("config file error")
+		return
+	}
+	levels := map[string]logging.Level{
+		"critical": logging.CRITICAL,
+		"error":    logging.ERROR,
+		"warning":  logging.WARNING,
+		"notice":   logging.NOTICE,
+		"info":     logging.INFO,
+		"debug":    logging.DEBUG,
+	}
+	level, ok := levels[config.Log_level]
+	if !ok {
+		log.Error("unrecognized log level '%s'\n", config.Log_level)
+		return
+	}
+	logging.SetLevel(level, "golia")
+
 	if os.Getenv("RUN_MAIN") == "true" {
 		log.Info("golia subprocess start")
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-		ip, err := GetAddr()
+		ip, err := GetAddr(conf.MondoAddr)
 		if err != nil {
 			os.Exit(1)
 		}
 		log.Infof("using ip address %s\n", ip)
 		metricHead := strings.Replace(ip, ".", "_", -1)
-		collector := Collector{ch, metricHead, sleepInterval}
+		collector := Collector{ch, metricHead, conf.ReloadInterval}
 		go handleExit(sigs)
-		go collectAndSend(carbonAddr)
-		go collector.CollectAllMetric()
-		reloaderLoop(fileToWatch, sleepInterval)
+		go collectAndSend(conf.CarbonAddr)
+		go collector.CollectAllMetric(conf.Metrics)
+		reloaderLoop(config_file, conf.ReloadInterval)
 	} else {
 		log.Info("golia watch process start")
+		os.Exit(restartWithReloader())
 	}
-	os.Exit(restartWithReloader())
 }

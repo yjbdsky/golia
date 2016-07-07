@@ -12,9 +12,14 @@ type Collector struct {
 	interval   int
 }
 
-func (c *Collector) CollectAllMetric() {
+func (c *Collector) CollectAllMetric(metricNames []string) {
 	for {
-		go c.GetUpTimeAndProcs()
+		for _, metricName := range metricNames {
+			switch metricName {
+			case "UpTimeAndProcs":
+				go c.GetUpTimeAndProcs()
+			}
+		}
 		time.Sleep(time.Second * time.Duration(c.interval))
 	}
 }
