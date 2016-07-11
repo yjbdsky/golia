@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,6 +38,7 @@ type Config struct {
 func Init() {
 	var format = logging.MustStringFormatter(
 		`%{color}%{time:15:04:05.000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}`)
+	//logFile,err =  os.OpenFile("log/golia.log", os.O_WRONLY,0644)
 	var logBackend = logging.NewLogBackend(os.Stderr, "", 0)
 	logging.SetFormatter(format)
 	logging.SetBackend(logBackend)
@@ -98,9 +100,9 @@ func restartWithReloader() int {
 		os.Setenv("RUN_MAIN", "true")
 		argv0, _ := lookPath()
 		files := make([]*os.File, 3)
-		files[syscall.Stdin] = os.Stdin
-		files[syscall.Stdout] = os.Stdout
-		files[syscall.Stderr] = os.Stderr
+		files[0] = os.Stdin
+		files[1] = os.Stdout
+		files[2] = os.Stderr
 		wd, _ := os.Getwd()
 		p, err := os.StartProcess(argv0, os.Args, &os.ProcAttr{Dir: wd, Env: os.Environ(), Files: files, Sys: &syscall.SysProcAttr{}})
 		if err != nil {
@@ -175,6 +177,15 @@ func GetAddr(addr string) (r string, err error) {
 	return
 }
 
+func writePidFile(path string) {
+	if path == "" {
+		path := "run/golia.pid"
+	}
+	if pid := syscall.Getpid(); pid != 1 {
+		ioutil.WriteFile(path, []byte(strconv.Itoa(pid)), 0644)
+	}
+}
+
 func main() {
 	flag.Parse()
 	config_file := "conf/golia.ini"
@@ -193,9 +204,9 @@ func main() {
 		"info":     logging.INFO,
 		"debug":    logging.DEBUG,
 	}
-	level, ok := levels[config.Log_level]
+	level, ok := levels[conf.Log_level]
 	if !ok {
-		log.Error("unrecognized log level '%s'\n", config.Log_level)
+		log.Error("unrecognized log level '%s'\n", conf.Log_level)
 		return
 	}
 	logging.SetLevel(level, "golia")
@@ -209,13 +220,14 @@ func main() {
 			os.Exit(1)
 		}
 		log.Infof("using ip address %s\n", ip)
-		metricHead := strings.Replace(ip, ".", "_", -1)
-		collector := Collector{ch, metricHead, conf.ReloadInterval}
+		metricHead := "golia." + strings.Replace(ip, ".", "_", -1)
+		collector := Collector{ch, metricHead, conf.MetricInterval}
 		go handleExit(sigs)
 		go collectAndSend(conf.CarbonAddr)
 		go collector.CollectAllMetric(conf.Metrics)
 		reloaderLoop(config_file, conf.ReloadInterval)
 	} else {
+		writePidFile("")
 		log.Info("golia watch process start")
 		os.Exit(restartWithReloader())
 	}
