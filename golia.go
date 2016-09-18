@@ -50,11 +50,17 @@ var ch = make(chan Datapoint)
 var conn *Conn
 var conf Config
 
-func collectAndSend(addr string) {
-	conn, err := NewConn(addr)
+func collectAndSend(addr string, interval int) {
+	var err error
+	conn, err = NewConn(addr)
 	if err == nil && conn != nil {
 		for {
 			dp := <-ch
+			if !conn.isAlive() {
+				log.Warningf("**********failed to reconnect, sleep %d sec", interval)
+				time.Sleep(time.Second * time.Duration(interval))
+				os.Exit(3)
+			}
 			n, err1 := conn.WriteDataPoint(dp)
 			if err1 != nil || n == 0 {
 				log.Warningf("can't send metric %v", dp)
@@ -62,7 +68,9 @@ func collectAndSend(addr string) {
 		}
 	} else {
 		log.Error(err)
-		os.Exit(2)
+		log.Warningf("**********sleep %d sec", interval)
+		time.Sleep(time.Second * time.Duration(interval))
+		os.Exit(3)
 	}
 }
 
@@ -97,6 +105,7 @@ func reloaderLoop(path string, interval int) {
 
 func restartWithReloader() int {
 	for {
+		log.Warningf("restart2")
 		os.Setenv("RUN_MAIN", "true")
 		argv0, _ := lookPath()
 		files := make([]*os.File, 3)
@@ -153,13 +162,13 @@ func getMd5(path string) (ret string, err error) {
 }
 
 func getAddrByDefault() (string, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	conn1, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		fmt.Println(err.Error())
 		return "", err
 	}
-	defer conn.Close()
-	return strings.Split(conn.LocalAddr().String(), ":")[0], nil
+	defer conn1.Close()
+	return strings.Split(conn1.LocalAddr().String(), ":")[0], nil
 }
 
 func GetAddr(addr string) (r string, err error) {
@@ -179,11 +188,14 @@ func GetAddr(addr string) (r string, err error) {
 
 func writePidFile(path string) {
 	if path == "" {
-		path := "run/golia.pid"
+		path = "run/golia.pid"
 	}
 	if pid := syscall.Getpid(); pid != 1 {
 		ioutil.WriteFile(path, []byte(strconv.Itoa(pid)), 0644)
 	}
+}
+func heartbeat() string {
+
 }
 
 func main() {
@@ -204,14 +216,15 @@ func main() {
 		"info":     logging.INFO,
 		"debug":    logging.DEBUG,
 	}
-	level, ok := levels[conf.Log_level]
+	level, ok := levels[conf.LogLevel]
 	if !ok {
-		log.Error("unrecognized log level '%s'\n", conf.Log_level)
+		log.Error("unrecognized log level '%s'\n", conf.LogLevel)
 		return
 	}
 	logging.SetLevel(level, "golia")
 
 	if os.Getenv("RUN_MAIN") == "true" {
+		log.Warningf("restart")
 		log.Info("golia subprocess start")
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -223,7 +236,7 @@ func main() {
 		metricHead := "golia." + strings.Replace(ip, ".", "_", -1)
 		collector := Collector{ch, metricHead, conf.MetricInterval}
 		go handleExit(sigs)
-		go collectAndSend(conf.CarbonAddr)
+		go collectAndSend(conf.CarbonAddr, conf.MetricInterval)
 		go collector.CollectAllMetric(conf.Metrics)
 		reloaderLoop(config_file, conf.ReloadInterval)
 	} else {

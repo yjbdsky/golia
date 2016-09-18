@@ -27,7 +27,7 @@ type Datapoint struct {
 }
 
 func (d *Datapoint) formated() string {
-	return fmt.Sprintf("%s %f %d\n", d.Name, d.Val, d.Time)
+	return fmt.Sprintf("%s %f %d", d.Name, d.Val, d.Time)
 }
 
 func NewConn(addr string) (*Conn, error) {
@@ -37,12 +37,12 @@ func NewConn(addr string) (*Conn, error) {
 		return nil, err
 	}
 	laddr, _ := net.ResolveTCPAddr("tcp", "0.0.0.0")
-	conn, err := net.DialTCP("tcp", laddr, raddr)
+	conn1, err := net.DialTCP("tcp", laddr, raddr)
 	if err != nil {
 		return nil, err
 	}
 	connObj := &Conn{
-		conn:     conn,
+		conn:     conn1,
 		shutdown: make(chan bool, 1),
 		In:       make(chan []byte, conn_in_buffer),
 		up:       true,
@@ -66,9 +66,9 @@ func (c *Conn) handleStatus() {
 	for {
 		select {
 		case c.up = <-c.updateUp:
-			log.Infof("conn %s up set to %t", c.addr, c.up)
+			log.Debug("conn %s up set to %t", c.addr, c.up)
 		case c.checkUp <- c.up:
-			log.Infof("conn %s up query responded with %t", c.addr, c.up)
+			log.Debug("conn %s up query responded with %t", c.addr, c.up)
 		}
 	}
 }
