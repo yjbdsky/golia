@@ -160,7 +160,7 @@ func sanityCheck(k string, v float64) float64 {
 		return 100.0
 	}
 	if v < 0.0 {
-		log.Errorf("%s = %d is less than  100\n", k, v)
+		log.Errorf("%s = %d is less than  0\n", k, v)
 		return 0.0
 	}
 	return v

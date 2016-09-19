@@ -27,12 +27,15 @@ const (
 )
 
 type Config struct {
-	ReloadInterval int
-	MetricInterval int
-	CarbonAddr     string
-	MondoAddr      string
-	Metrics        []string
-	LogLevel       string
+	ReloadInterval    int
+	MetricInterval    int
+	CarbonAddr        string
+	MondoAddr         string
+	Metrics           []string
+	LogLevel          string
+	HeartbeatInterval int
+	HeartbeatUrl      string
+	GoliaconfUrl      string
 }
 
 func Init() {
@@ -85,10 +88,23 @@ func lookPath() (argv0 string, err error) {
 	return
 }
 
-func reloaderLoop(path string, interval int) {
+func reloaderLoop(path string, surl string, interval int) {
 	var md5 string
 	for {
 		tag, err := getMd5(path)
+		sdata, err1 := getUrlconf(surl)
+		if err1 == nil {
+			stag, err1 := getByteMd5(sdata)
+			CheckErr(err1)
+			if stag != tag && err1 == nil {
+				log.Warning("detect change form URL....", stag, tag)
+				ioutil.WriteFile(path, sdata, 0755)
+				tag, err = getMd5(path)
+			}
+		} else {
+			log.Warning("[ERROR]:", err1)
+		}
+
 		if err != nil {
 			log.Error(err)
 			os.Exit(4)
@@ -96,16 +112,14 @@ func reloaderLoop(path string, interval int) {
 		if md5 == "" {
 			md5 = tag
 		} else if tag != md5 {
-			log.Info("detect change....")
+			log.Info("detect change ....")
 			os.Exit(3)
 		}
 		time.Sleep(time.Second * time.Duration(interval))
 	}
 }
-
 func restartWithReloader() int {
 	for {
-		log.Warningf("restart2")
 		os.Setenv("RUN_MAIN", "true")
 		argv0, _ := lookPath()
 		files := make([]*os.File, 3)
@@ -161,6 +175,13 @@ func getMd5(path string) (ret string, err error) {
 	return
 }
 
+func getByteMd5(s []byte) (string, error) {
+	md5h := md5.New()
+	_, err := md5h.Write(s)
+	ret := fmt.Sprintf("%x", md5h.Sum(nil))
+	return ret, err
+}
+
 func getAddrByDefault() (string, error) {
 	conn1, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
@@ -194,8 +215,73 @@ func writePidFile(path string) {
 		ioutil.WriteFile(path, []byte(strconv.Itoa(pid)), 0644)
 	}
 }
-func heartbeat() string {
 
+func sepurl(surl string) string {
+	if !strings.HasPrefix(surl, "http://") {
+		surl = "http://" + surl
+	}
+	if strings.Contains(surl, "$MondoAddr") {
+		surl = strings.Replace(surl, "$MondoAddr", conf.MondoAddr, -1)
+	}
+	return surl
+}
+
+var c *http.Client = &http.Client{
+	Transport: &http.Transport{
+		Dial: func(netw, addr string) (net.Conn, error) {
+			deadline := time.Now().Add(25 * time.Second)
+			c, err := net.DialTimeout(netw, addr, time.Second*20)
+			if err != nil {
+				return nil, err
+			}
+			c.SetDeadline(deadline)
+			return c, nil
+		},
+	},
+}
+
+func heartbeat(surl string, interval int) {
+	surl = sepurl(surl)
+	for {
+		res, err := c.Get(surl)
+		//defer res.Body.Close()
+		if err != nil {
+			log.Warning("heartbeat failed [ERROR]:", err)
+			time.Sleep(time.Second * time.Duration(interval))
+			continue
+		}
+		body, err := ioutil.ReadAll(res.Body)
+		if res.StatusCode != 200 && string(body) != "ok" {
+			if string(body) == "notreg" {
+				purl := string([]byte(surl)[:strings.LastIndex(surl, "/")]) + "/reg"
+				log.Warning(purl)
+				reg(purl)
+			} else {
+				log.Warningf("heartbeat failed StatusCode is %d\n", res.StatusCode)
+			}
+
+		} else {
+			log.Info("heartbeat sucess")
+		}
+
+		time.Sleep(time.Second * time.Duration(interval))
+	}
+}
+func CheckErr(err error) {
+	if err != nil {
+		log.Warning("[ERROR]:", err)
+	}
+}
+
+func getUrlconf(surl string) (data []byte, err error) {
+	surl = sepurl(surl)
+	res, err := c.Get(surl)
+	if err != nil {
+		log.Warning("get failed [ERROR]:", err)
+		return []byte(""), err
+	}
+	data, err = ioutil.ReadAll(res.Body)
+	return data, err
 }
 
 func main() {
@@ -224,7 +310,6 @@ func main() {
 	logging.SetLevel(level, "golia")
 
 	if os.Getenv("RUN_MAIN") == "true" {
-		log.Warningf("restart")
 		log.Info("golia subprocess start")
 		sigs := make(chan os.Signal, 1)
 		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -238,7 +323,8 @@ func main() {
 		go handleExit(sigs)
 		go collectAndSend(conf.CarbonAddr, conf.MetricInterval)
 		go collector.CollectAllMetric(conf.Metrics)
-		reloaderLoop(config_file, conf.ReloadInterval)
+		go heartbeat(conf.HeartbeatUrl, conf.HeartbeatInterval)
+		reloaderLoop(config_file, conf.GoliaconfUrl, conf.ReloadInterval)
 	} else {
 		writePidFile("")
 		log.Info("golia watch process start")
